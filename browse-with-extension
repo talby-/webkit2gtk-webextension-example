@@ -1,49 +1,64 @@
-#! /usr/bin/env python3
+#! /usr/bin/env perl
 # -*- coding: utf-8 -*-
 # vim:fenc=utf-8
 #
 # Copyright (C) 2015-2016 Adrian Perez <aperez@igalia.com>
 # Copyright (C) 2016 Nathan Hoad <nathan@getoffmalawn.com>
+# Copyright (C) 2018 Robert Stone <talby@trap.mtview.ca.us>
 #
 # Distributed under terms of the MIT license.
 
-import gi
-gi.require_version("WebKit2", "4.0")
+use strict;
+use warnings;
+use Glib::Object::Introspection ();
+Glib::Object::Introspection->setup(
+    basename => $_->[0],
+    version => $_->[1],
+    package => $_->[2],
+) for(
+    [ qw(Gtk 3.0 Gtk) ],
+    [ qw(WebKit2 4.0 WebKit2) ],
+);
+Gtk::init();
+use FindBin ();
 
-from gi.repository import WebKit2, Gtk, GLib
-from os import path
-import sys
+my $mydir = $FindBin::Bin;
+print("Extension directory: ", $mydir, "\n");
 
-mydir = path.abspath(path.dirname(__file__))
-print("Extension directory:", mydir)
+my $ctx = WebKit2::WebContext::get_default();
+$ctx->set_web_extensions_directory($mydir);
+$ctx->set_web_extensions_initialization_user_data(Glib::Variant->new(
+    'a{ss}' => { pl_ext => "$mydir/extension.pm" }
+));
 
-ctx = WebKit2.WebContext.get_default()
-ctx.set_web_extensions_directory(mydir)
-ctx.set_web_extensions_initialization_user_data(GLib.Variant.new_string("test string"))
+my $wnd = Gtk::Window->new('toplevel');
+my $web = WebKit2::WebView->new_with_context($ctx);
+$wnd->signal_connect("destroy", sub { Gtk::main_quit() });
+$wnd->add($web);
+$wnd->set_default_size(1152, 800);
+$wnd->show_all();
 
-wnd = Gtk.Window()
-web = WebKit2.WebView.new_with_context(ctx)
-wnd.connect("destroy", Gtk.main_quit)
-wnd.add(web)
-wnd.set_default_size(1152, 800)
-wnd.show_all()
+sub on_load_changed {
+    my($webview, $event) = @_;
+    if($event eq 'finished') {
+        $wnd->set_title($webview->get_title());
+    } else {
+        $wnd->set_title(sprintf "Loading...  %0.1f",
+                $webview->get_estimated_load_progress());
+    }
+}
 
-def on_load_changed(webview, event):
-    if event == WebKit2.LoadEvent.FINISHED:
-        wnd.set_title(webview.get_title())
-    else:
-        wnd.set_title("Loading...  {:0.1f}%"
-                .format(webview.get_estimated_load_progress()))
+sub on_load_failed {
+    my($webview, $event, $url, $error) = @_;
+    print("Error loading ", $url, " - ", $error, "\n");
+}
 
-def on_load_failed(webview, event, url, error):
-    print("Error loading", url, "-", error)
+$web->signal_connect("load-changed", \&on_load_changed);
+$web->signal_connect("load-failed", \&on_load_failed);
 
-web.connect("load-changed", on_load_changed)
-web.connect("load-failed", on_load_failed)
-
-if len(sys.argv) > 1:
-    web.load_uri(sys.argv[1])
-else:
-    web.load_uri("http://ddg.gg")
-
-Gtk.main()
+if(@ARGV > 1) {
+    $web->load_uri($ARGV[0]);
+} else {
+    $web->load_uri("http://ddg.gg");
+}
+Gtk::main();
